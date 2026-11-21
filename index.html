@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dex</title>
+<style>
+  body { font-family: Arial, sans-serif; background: #111; color: #eee; margin: 0; padding: 16px; text-align: center; }
+  h1 { margin: 8px 0 4px; }
+  #stato { color: #888; margin-bottom: 16px; min-height: 20px; }
+  #mic { width: 120px; height: 120px; border-radius: 50%; border: none; background: #2a7de1; color: white; font-size: 18px; }
+  #mic.attivo { background: #d33; }
+  #log { text-align: left; margin-top: 20px; }
+  .tu { color: #8cf; margin-top: 12px; }
+  .dex { color: #eee; margin-bottom: 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+  <h1>Dex</h1>
+  <div id="stato">Tocca il microfono e parla</div>
+  <button id="mic">Parla</button>
+  <div id="log"></div>
+
+<script>
+  const URL_DEX = 'https://script.google.com/macros/s/AKfycbxfqFBLKuZmFEoeezAarvQem0WWZ8bRWmd6ba4P94-vCmghCiR0UfeaJZVos7GFSZmS/exec';
+
+  const mic = document.getElementById('mic');
+  const stato = document.getElementById('stato');
+  const log = document.getElementById('log');
+
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    stato.textContent = 'Riconoscimento vocale non supportato. Usa Chrome.';
+  }
+
+  const rec = SR ? new SR() : null;
+  if (rec) { rec.lang = 'it-IT'; rec.interimResults = false; }
+
+  function aggiungi(classe, testo) {
+    const d = document.createElement('div');
+    d.className = classe;
+    d.textContent = testo;
+    log.prepend(d);
+  }
+
+  function parla(testo) {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(testo.replace(/[*#`]/g, ''));
+    u.lang = 'it-IT';
+    speechSynthesis.speak(u);
+  }
+
+  mic.onclick = () => {
+    if (!rec) return;
+    speechSynthesis.cancel();
+    mic.classList.add('attivo');
+    stato.textContent = 'Ti ascolto...';
+    rec.start();
+  };
+
+  if (rec) {
+    rec.onresult = async (e) => {
+      const domanda = e.results[0][0].transcript;
+      mic.classList.remove('attivo');
+      stato.textContent = 'Dex sta pensando...';
+      aggiungi('tu', 'Tu: ' + domanda);
+      try {
+        const r = await fetch(URL_DEX + '?q=' + encodeURIComponent(domanda));
+        const dati = await r.json();
+        stato.textContent = 'Tocca il microfono e parla';
+        aggiungi('dex', 'Dex: ' + dati.risposta);
+        parla(dati.risposta);
+      } catch (err) {
+        stato.textContent = 'Errore';
+        aggiungi('dex', 'Errore: ' + err.message);
+      }
+    };
+    rec.onerror = (e) => {
+      mic.classList.remove('attivo');
+      stato.textContent = 'Errore microfono: ' + e.error;
+    };
+    rec.onend = () => mic.classList.remove('attivo');
+  }
+</script>
+</body>
+</html>
