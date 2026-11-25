@@ -17,8 +17,8 @@
 </head>
 <body>
   <h1>Dex</h1>
-  <div id="stato">Tocca il microfono e parla</div>
-  <button id="mic">Parla</button>
+  <div id="stato">Tocca il pulsante per iniziare a parlare</div>
+  <button id="mic">Inizia</button>
   <div id="log"></div>
 
 <script>
@@ -34,7 +34,16 @@
   }
 
   const rec = SR ? new SR() : null;
-  if (rec) { rec.lang = 'it-IT'; rec.interimResults = false; }
+  if (rec) {
+    rec.lang = 'it-IT';
+    rec.interimResults = true;   // riceve anche le parole parziali, per l'interruzione
+    rec.continuous = false;
+  }
+
+  let conversazione = false;   // true quando la conversazione continua e attiva
+  let dexParla = false;        // true mentre Dex sta parlando
+  let inAttesa = false;        // true mentre aspetta la risposta di Gemini
+  let microfonoAperto = false;
 
   function aggiungi(classe, testo) {
     const d = document.createElement('div');
@@ -43,43 +52,96 @@
     log.prepend(d);
   }
 
+  function avviaAscolto() {
+    if (!conversazione || microfonoAperto || inAttesa) return;
+    try {
+      rec.start();
+      microfonoAperto = true;
+      mic.classList.add('attivo');
+      stato.textContent = dexParla ? 'Dex parla... puoi interromperlo' : 'Ti ascolto...';
+    } catch (e) {}
+  }
+
+  function fermaDex() {
+    speechSynthesis.cancel();
+    dexParla = false;
+  }
+
   function parla(testo) {
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(testo.replace(/[*#`]/g, ''));
     u.lang = 'it-IT';
+    u.onstart = () => { dexParla = true; };
+    u.onend = () => { dexParla = false; avviaAscolto(); };
+    u.onerror = () => { dexParla = false; avviaAscolto(); };
+    dexParla = true;
     speechSynthesis.speak(u);
+    // Mentre Dex parla, riapre il microfono per poter essere interrotto
+    setTimeout(avviaAscolto, 300);
   }
 
   mic.onclick = () => {
     if (!rec) return;
-    speechSynthesis.cancel();
-    mic.classList.add('attivo');
-    stato.textContent = 'Ti ascolto...';
-    rec.start();
+    if (conversazione) {
+      // Secondo tocco: ferma tutto
+      conversazione = false;
+      fermaDex();
+      try { rec.stop(); } catch (e) {}
+      mic.textContent = 'Inizia';
+      mic.classList.remove('attivo');
+      stato.textContent = 'Conversazione terminata. Tocca per ricominciare';
+    } else {
+      conversazione = true;
+      mic.textContent = 'Stop';
+      avviaAscolto();
+    }
   };
 
   if (rec) {
     rec.onresult = async (e) => {
-      const domanda = e.results[0][0].transcript;
-      mic.classList.remove('attivo');
+      const ultimo = e.results[e.results.length - 1];
+      const testo = ultimo[0].transcript.trim();
+
+      // Se parli mentre Dex sta rispondendo: lo interrompe subito
+      if (dexParla && testo.length > 0) {
+        fermaDex();
+      }
+
+      if (!ultimo.isFinal) return;   // aspetta la frase completa
+      if (testo.length === 0) return;
+
+      inAttesa = true;
       stato.textContent = 'Dex sta pensando...';
-      aggiungi('tu', 'Tu: ' + domanda);
+      aggiungi('tu', 'Tu: ' + testo);
       try {
-        const r = await fetch(URL_DEX + '?q=' + encodeURIComponent(domanda));
+        const r = await fetch(URL_DEX + '?q=' + encodeURIComponent(testo));
         const dati = await r.json();
-        stato.textContent = 'Tocca il microfono e parla';
+        inAttesa = false;
         aggiungi('dex', 'Dex: ' + dati.risposta);
-        parla(dati.risposta);
+        if (conversazione) parla(dati.risposta);
       } catch (err) {
-        stato.textContent = 'Errore';
+        inAttesa = false;
+        stato.textContent = 'Errore: ' + err.message;
         aggiungi('dex', 'Errore: ' + err.message);
+        avviaAscolto();
       }
     };
+
     rec.onerror = (e) => {
+      microfonoAperto = false;
       mic.classList.remove('attivo');
-      stato.textContent = 'Errore microfono: ' + e.error;
+      if (e.error === 'no-speech' || e.error === 'aborted') {
+        setTimeout(avviaAscolto, 300);   // silenzio: riprova
+      } else {
+        stato.textContent = 'Errore microfono: ' + e.error;
+      }
     };
-    rec.onend = () => mic.classList.remove('attivo');
+
+    rec.onend = () => {
+      microfonoAperto = false;
+      mic.classList.remove('attivo');
+      if (conversazione && !inAttesa) setTimeout(avviaAscolto, 200);
+    };
   }
 </script>
 </body>
